@@ -1,0 +1,590 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pipeline Stage Tracker</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --navy: #1e3d78;          /* stage-list navy (image 1 style) */
+    --navy-dark: #16305f;
+    --ink: #2b3990;           /* detail-view border/label navy   */
+    --cream: #faf6ee;
+    --card: #ffffff;
+    --text: #2d2d2d;
+    --muted: #6b6b6b;
+    --pill: #c5d7f2;
+    --pill-soft: #e5ebfb;
+    --panel-border: #333;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; font-family: 'DM Sans', Arial, Helvetica, sans-serif; }
+  #map { position: absolute; inset: 0; }
+
+  /* ---------- Toolbar ---------- */
+  #toolbar {
+    position: absolute; top: 12px; left: 54px; z-index: 1000;
+    display: flex; gap: 8px; align-items: center;
+  }
+  .tool-btn {
+    background: var(--navy); color: #fff; border: 1px solid var(--navy-dark);
+    padding: 9px 16px; font-size: 14px; font-weight: 700; cursor: pointer;
+    border-radius: 4px; box-shadow: 0 1px 4px rgba(0,0,0,.35); font-family: inherit;
+  }
+  .tool-btn:hover { background: var(--navy-dark); }
+  .tool-btn.active { background: #b3261e; border-color: #7f1a14; }
+  .tool-btn.secondary { background: #fff; color: var(--navy); border: 1px solid var(--navy); font-weight: 500; }
+  .tool-btn.secondary:hover { background: #eef3fb; }
+  #drawHint {
+    position: absolute; top: 60px; left: 54px; z-index: 1000;
+    background: rgba(30,61,120,.92); color: #fff; padding: 8px 14px;
+    border-radius: 4px; font-size: 13px; display: none; max-width: 340px;
+  }
+
+  /* ---------- Modal shell ---------- */
+  .modal-backdrop {
+    position: fixed; inset: 0; background: rgba(0,0,0,.35);
+    z-index: 2000; display: none; align-items: center; justify-content: center;
+  }
+  .modal-backdrop.open { display: flex; }
+  .modal {
+    background: #fff; border: 2px solid var(--panel-border);
+    width: 520px; max-width: 94vw; max-height: 88vh; overflow-y: auto;
+    padding: 14px; box-shadow: 0 6px 30px rgba(0,0,0,.4);
+  }
+  .modal-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+  .modal-title { font-size: 22px; font-weight: 700; letter-spacing: .5px; padding-left: 12px; }
+  .modal-title input {
+    font-size: 22px; font-weight: 700; border: none; outline: none;
+    width: 100%; font-family: inherit; letter-spacing: .5px;
+  }
+  .close-x {
+    background: none; border: none; font-size: 22px; cursor: pointer;
+    color: #555; line-height: 1; padding: 2px 8px;
+  }
+  .close-x:hover { color: #000; }
+
+  /* ---------- Stage list (image 1) ---------- */
+  .stage-row { display: flex; align-items: stretch; margin-bottom: 9px; }
+  .stage-bar {
+    flex: 1; background: var(--navy); color: #fff; font-weight: 700;
+    font-size: 17px; letter-spacing: .5px; text-transform: uppercase;
+    padding: 11px 14px; cursor: pointer; border: 1px solid var(--navy-dark);
+    display: flex; justify-content: space-between; align-items: center; user-select: none;
+  }
+  .stage-bar:hover { background: var(--navy-dark); }
+  .stage-bar .arrow { font-size: 15px; }
+  .stage-del {
+    background: #fff; border: 1px solid #999; color: #b3261e;
+    width: 34px; cursor: pointer; font-size: 16px; margin-left: 6px;
+  }
+  .stage-del:hover { background: #fbe9e7; }
+  .pill-btn {
+    display: block; margin: 16px auto 6px; background: var(--pill);
+    border: 1px solid #4a4a4a; border-radius: 999px;
+    padding: 9px 26px; font-size: 15px; cursor: pointer; min-width: 260px; font-family: inherit;
+  }
+  .pill-btn:hover { background: #b1c8ec; }
+  .pill-btn .plus { float: left; font-weight: 700; }
+  .danger-row { text-align: center; margin-top: 14px; }
+  .danger-link { background: none; border: none; color: #b3261e; cursor: pointer; font-size: 13px; text-decoration: underline; font-family: inherit; }
+
+  /* =========================================================
+     Stage detail — "Event History" design
+     ========================================================= */
+  .modal.detail {
+    width: 680px; padding: 0; border: none; border-radius: 14px;
+    overflow: hidden; display: flex; flex-direction: column;
+    box-shadow: 0 10px 40px rgba(0,0,0,.35);
+  }
+  .detail-head {
+    background: #fff; padding: 18px 22px; display: flex; align-items: center; gap: 12px;
+    border-bottom: 1px solid #eceae4; flex: none;
+  }
+  .detail-head h2 { font-size: 21px; font-weight: 700; color: #1c1c1c; letter-spacing: .2px; }
+  .badge {
+    background: #f1efe8; border: 1px solid #e2dfd5; color: #6f6d66;
+    font-size: 13px; font-weight: 500; padding: 4px 12px; border-radius: 8px;
+    max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .detail-head .spacer { flex: 1; }
+  .icon-circle {
+    width: 38px; height: 38px; border-radius: 50%; border: 1px solid #dcd9d0;
+    background: #fff; cursor: pointer; font-size: 16px; color: #444;
+    display: flex; align-items: center; justify-content: center; font-family: inherit;
+  }
+  .icon-circle:hover { border-color: #aaa; color: #000; }
+  .detail-body { background: var(--cream); padding: 20px 24px 26px; overflow-y: auto; }
+  .back-link {
+    background: none; border: none; color: var(--ink); cursor: pointer;
+    font-size: 13px; font-weight: 500; text-decoration: underline;
+    padding: 0; margin-bottom: 14px; font-family: inherit; display: inline-block;
+  }
+
+  .f-label {
+    display: block; color: var(--ink); font-size: 11.5px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: .09em; margin-bottom: 5px;
+  }
+  .f-input, .f-area {
+    width: 100%; border: none; outline: none; background: transparent;
+    font-size: 15.5px; color: var(--text); font-family: inherit; padding: 0;
+  }
+  .f-area { resize: none; min-height: 22px; overflow: hidden; }
+  .f-value { font-size: 15.5px; color: var(--text); white-space: pre-wrap; word-break: break-word; }
+  .f-value.empty { color: #9a9a9a; }
+  .info-card.readonly { background: #fdfcf9; }
+  .info-card.readonly .cell { background: #fdfcf9; }
+
+  /* Info card */
+  .info-card {
+    background: var(--card); border: 2px solid var(--ink); border-radius: 10px;
+    overflow: hidden; margin-bottom: 20px;
+  }
+  .info-row { display: grid; }
+  .info-row.r1 { grid-template-columns: 38% 31% 31%; }
+  .info-row.r2 { grid-template-columns: 62% 38%; border-top: 1.5px solid var(--ink); }
+  .cell { padding: 13px 16px 14px; min-width: 0; }
+  .cell + .cell { border-left: 1.5px solid var(--ink); }
+
+  /* Event cards */
+  .event-block { display: flex; align-items: flex-start; gap: 14px; margin-bottom: 16px; }
+  .remove-ev {
+    flex: none; width: 40px; height: 40px; border-radius: 50%;
+    border: 2px solid var(--ink); background: var(--card); color: var(--ink);
+    font-size: 22px; line-height: 1; cursor: pointer; margin-top: 8px;
+    display: flex; align-items: center; justify-content: center; font-family: inherit;
+  }
+  .remove-ev:hover { border-color: #b3261e; color: #b3261e; }
+  .event-card {
+    flex: 1; background: var(--card); border: 2px solid var(--ink);
+    border-radius: 10px; overflow: hidden; min-width: 0;
+  }
+  .event-top { display: grid; grid-template-columns: 38% 31% 31%; }
+  .event-desc { border-top: 1.5px solid var(--ink); padding: 13px 16px 14px; }
+  .ev-no-val { font-size: 15.5px; color: var(--text); }
+
+  .add-event-btn {
+    display: flex; align-items: center; justify-content: center; gap: 6px;
+    margin: 6px auto 0; background: var(--pill-soft); color: var(--ink);
+    border: 1px solid #cdd8f3; border-radius: 999px; padding: 12px 30px;
+    font-size: 15px; font-weight: 700; cursor: pointer; font-family: inherit;
+    box-shadow: 0 1px 3px rgba(43,57,144,.12);
+  }
+  .add-event-btn:hover { background: #d8e2fa; }
+
+  /* date inputs */
+  input[type="date"].f-input { color: var(--text); }
+  input[type="date"].f-input::-webkit-calendar-picker-indicator { opacity: .55; cursor: pointer; }
+
+  @media (max-width: 560px) {
+    .info-row.r1, .event-top { grid-template-columns: 1fr; }
+    .info-row.r1 .cell + .cell, .event-top .cell + .cell { border-left: none; border-top: 1.5px solid var(--ink); }
+    .info-row.r2 { grid-template-columns: 1fr; }
+    .info-row.r2 .cell + .cell { border-left: none; border-top: 1.5px solid var(--ink); }
+  }
+</style>
+</head>
+<body>
+<div id="map"></div>
+
+<div id="toolbar">
+  <button id="drawBtn" class="tool-btn">Draw Pipeline</button>
+  <button id="exportBtn" class="tool-btn secondary">Export GeoJSON</button>
+  <button id="importBtn" class="tool-btn secondary">Import</button>
+  <input type="file" id="importFile" accept=".geojson,.json" style="display:none">
+</div>
+<div id="drawHint">Click the map to place vertices. <b>Double-click</b> (or press Enter) to finish the pipeline. Press Esc to cancel.</div>
+
+<!-- Stage list modal (image 1) -->
+<div class="modal-backdrop" id="stagesModal">
+  <div class="modal">
+    <div class="modal-head">
+      <div class="modal-title" style="flex:1"><input id="pipelineNameInput" placeholder="Pipeline name"></div>
+      <button class="close-x" data-close="stagesModal">&times;</button>
+    </div>
+
+    <div class="info-card" style="margin: 4px 0 18px;">
+      <div class="info-row r1">
+        <div class="cell"><label class="f-label">Asset Name</label><input class="f-input" data-info="assetName" placeholder="&mdash;"></div>
+        <div class="cell"><label class="f-label">Project No.</label><input class="f-input" data-info="projectNo" placeholder="&mdash;"></div>
+        <div class="cell"><label class="f-label">Project Date</label><input class="f-input" type="date" data-info="projectDate"></div>
+      </div>
+      <div class="info-row r2">
+        <div class="cell"><label class="f-label">Manufacturer</label><input class="f-input" data-info="manufacturer" placeholder="&mdash;"></div>
+        <div class="cell"><label class="f-label">Description</label><textarea class="f-area" data-info="description" rows="1" placeholder="&mdash;"></textarea></div>
+      </div>
+    </div>
+
+    <div id="stageList"></div>
+    <button class="pill-btn" id="addStageBtn"><span class="plus">+</span>Add Stage</button>
+    <div class="danger-row"><button class="danger-link" id="deletePipelineBtn">Delete this pipeline</button></div>
+  </div>
+</div>
+
+<!-- Stage detail modal — Event History design -->
+<div class="modal-backdrop" id="detailModal">
+  <div class="modal detail">
+    <div class="detail-head">
+      <h2>Event History</h2>
+      <span class="badge" id="stageBadge">STAGE</span>
+      <span class="spacer"></span>
+      <button class="icon-circle" data-close="detailModal">&times;</button>
+    </div>
+    <div class="detail-body">
+      <button class="back-link" id="backToStages">&larr; Back to stages</button>
+
+      <div class="info-card readonly">
+        <div class="info-row r1">
+          <div class="cell"><label class="f-label">Asset Name</label><div class="f-value" data-view="assetName">&mdash;</div></div>
+          <div class="cell"><label class="f-label">Project No.</label><div class="f-value" data-view="projectNo">&mdash;</div></div>
+          <div class="cell"><label class="f-label">Project Date</label><div class="f-value" data-view="projectDate">&mdash;</div></div>
+        </div>
+        <div class="info-row r2">
+          <div class="cell"><label class="f-label">Manufacturer</label><div class="f-value" data-view="manufacturer">&mdash;</div></div>
+          <div class="cell"><label class="f-label">Description</label><div class="f-value" data-view="description">&mdash;</div></div>
+        </div>
+      </div>
+
+      <div id="eventList"></div>
+      <button class="add-event-btn" id="addEventBtn"><span>+</span> Add Event</button>
+    </div>
+  </div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+/* =========================================================
+   Data model (persisted to localStorage)
+   pipelines: [{ id, name, coords:[[lat,lng],...],
+                 info:{assetName,projectNo,projectDate,manufacturer,description},
+                 stages:[{ id, name, events:[{title,date,desc}] }] }]
+   ========================================================= */
+const LS_KEY = 'pipelineStageTracker_v1';
+const DEFAULT_STAGES = ['DESIGN', 'ORDER', 'INSTALLATION', 'TESTING'];
+
+let state = load();
+let currentPipelineId = null;
+let currentStageId = null;
+
+function load() {
+  try {
+    const raw = localStorage.getItem(LS_KEY);
+    if (raw) return JSON.parse(raw);
+  } catch (e) { console.warn('Could not read saved data', e); }
+  return { pipelines: [] };
+}
+function save() {
+  try { localStorage.setItem(LS_KEY, JSON.stringify(state)); }
+  catch (e) { console.warn('Could not save', e); }
+}
+const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+
+/* ---------------- Map ---------------- */
+const map = L.map('map', { doubleClickZoom: false }).setView([31.9, -102.1], 8); // Permian Basin
+const streets = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  maxZoom: 19, attribution: '&copy; OpenStreetMap contributors'
+}).addTo(map);
+const imagery = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+  maxZoom: 19, attribution: 'Esri World Imagery'
+});
+L.control.layers({ 'Streets': streets, 'Imagery': imagery }, null, { position: 'topright' }).addTo(map);
+
+const pipelineLayers = {}; // id -> L.polyline
+
+function pipelineStyle(hover) {
+  return { color: hover ? '#b3261e' : '#1e3d78', weight: 5, opacity: 0.9 };
+}
+function renderPipeline(p) {
+  if (pipelineLayers[p.id]) map.removeLayer(pipelineLayers[p.id]);
+  const line = L.polyline(p.coords, pipelineStyle(false)).addTo(map);
+  line.bindTooltip(p.name || 'Pipeline', { sticky: true });
+  line.on('mouseover', () => line.setStyle(pipelineStyle(true)));
+  line.on('mouseout', () => line.setStyle(pipelineStyle(false)));
+  line.on('click', (e) => { L.DomEvent.stop(e); openStagesModal(p.id); });
+  pipelineLayers[p.id] = line;
+}
+state.pipelines.forEach(renderPipeline);
+if (state.pipelines.length) {
+  const group = L.featureGroup(Object.values(pipelineLayers));
+  map.fitBounds(group.getBounds().pad(0.2));
+}
+
+/* ---------------- Drawing ---------------- */
+const drawBtn = document.getElementById('drawBtn');
+const drawHint = document.getElementById('drawHint');
+let drawing = false, drawCoords = [], tempLine = null, tempMarkers = [];
+
+drawBtn.addEventListener('click', () => drawing ? cancelDraw() : startDraw());
+
+function startDraw() {
+  drawing = true; drawCoords = [];
+  drawBtn.textContent = 'Cancel Drawing'; drawBtn.classList.add('active');
+  drawHint.style.display = 'block';
+  map.getContainer().style.cursor = 'crosshair';
+  map.on('click', onDrawClick);
+  map.on('dblclick', finishDraw);
+  document.addEventListener('keydown', onDrawKey);
+}
+function onDrawClick(e) {
+  drawCoords.push([e.latlng.lat, e.latlng.lng]);
+  const m = L.circleMarker(e.latlng, { radius: 4, color: '#b3261e', fillColor: '#fff', fillOpacity: 1 }).addTo(map);
+  tempMarkers.push(m);
+  if (tempLine) map.removeLayer(tempLine);
+  if (drawCoords.length > 1) tempLine = L.polyline(drawCoords, { color: '#b3261e', weight: 4, dashArray: '6 6' }).addTo(map);
+}
+function onDrawKey(e) {
+  if (e.key === 'Escape') cancelDraw();
+  if (e.key === 'Enter') finishDraw();
+}
+function finishDraw() {
+  if (drawCoords.length < 2) { cancelDraw(); return; }
+  const p = {
+    id: uid(),
+    name: 'Pipeline ' + (state.pipelines.length + 1),
+    coords: drawCoords.slice(),
+    info: { assetName: '', projectNo: '', projectDate: '', manufacturer: '', description: '' },
+    stages: DEFAULT_STAGES.map(n => ({ id: uid(), name: n, events: [] }))
+  };
+  state.pipelines.push(p);
+  save();
+  cleanupDraw();
+  renderPipeline(p);
+  openStagesModal(p.id);
+}
+function cancelDraw() { cleanupDraw(); }
+function cleanupDraw() {
+  drawing = false;
+  drawBtn.textContent = 'Draw Pipeline'; drawBtn.classList.remove('active');
+  drawHint.style.display = 'none';
+  map.getContainer().style.cursor = '';
+  map.off('click', onDrawClick);
+  map.off('dblclick', finishDraw);
+  document.removeEventListener('keydown', onDrawKey);
+  if (tempLine) { map.removeLayer(tempLine); tempLine = null; }
+  tempMarkers.forEach(m => map.removeLayer(m)); tempMarkers = [];
+  drawCoords = [];
+}
+
+/* ---------------- Helpers ---------------- */
+const getPipeline = id => state.pipelines.find(p => p.id === id);
+const getStage = (p, sid) => p && p.stages.find(s => s.id === sid);
+function openModal(id) { document.getElementById(id).classList.add('open'); }
+function closeModal(id) { document.getElementById(id).classList.remove('open'); }
+document.querySelectorAll('[data-close]').forEach(b =>
+  b.addEventListener('click', () => closeModal(b.dataset.close)));
+document.querySelectorAll('.modal-backdrop').forEach(bd =>
+  bd.addEventListener('click', e => { if (e.target === bd) bd.classList.remove('open'); }));
+
+/* ---------------- Stage list modal ---------------- */
+const stageList = document.getElementById('stageList');
+const pipelineNameInput = document.getElementById('pipelineNameInput');
+
+function openStagesModal(pid) {
+  currentPipelineId = pid;
+  const p = getPipeline(pid);
+  if (!p) return;
+  pipelineNameInput.value = p.name;
+  document.querySelectorAll('[data-info]').forEach(el => {
+    el.value = p.info[el.dataset.info] || '';
+    if (el.classList.contains('f-area')) autoGrow(el);
+  });
+  renderStageList(p);
+  closeModal('detailModal');
+  openModal('stagesModal');
+}
+function renderStageList(p) {
+  stageList.innerHTML = '';
+  p.stages.forEach(s => {
+    const row = document.createElement('div');
+    row.className = 'stage-row';
+
+    const bar = document.createElement('div');
+    bar.className = 'stage-bar';
+    bar.innerHTML = `<span>${escapeHtml(s.name)}</span><span class="arrow">&#9654;</span>`;
+    bar.addEventListener('click', () => openDetailModal(p.id, s.id));
+
+    const del = document.createElement('button');
+    del.className = 'stage-del'; del.innerHTML = '&times;'; del.title = 'Delete stage';
+    del.addEventListener('click', () => {
+      if (confirm(`Delete stage "${s.name}" and its events?`)) {
+        p.stages = p.stages.filter(x => x.id !== s.id);
+        save(); renderStageList(p);
+      }
+    });
+
+    row.appendChild(bar); row.appendChild(del);
+    stageList.appendChild(row);
+  });
+}
+pipelineNameInput.addEventListener('input', () => {
+  const p = getPipeline(currentPipelineId);
+  if (!p) return;
+  p.name = pipelineNameInput.value;
+  save();
+  const layer = pipelineLayers[p.id];
+  if (layer) layer.setTooltipContent(p.name || 'Pipeline');
+});
+document.getElementById('addStageBtn').addEventListener('click', () => {
+  const p = getPipeline(currentPipelineId);
+  if (!p) return;
+  const name = prompt('Stage name:', '');
+  if (!name) return;
+  p.stages.push({ id: uid(), name: name.toUpperCase(), events: [] });
+  save(); renderStageList(p);
+});
+document.getElementById('deletePipelineBtn').addEventListener('click', () => {
+  const p = getPipeline(currentPipelineId);
+  if (!p) return;
+  if (!confirm(`Delete "${p.name}" and all of its stages and events?`)) return;
+  map.removeLayer(pipelineLayers[p.id]); delete pipelineLayers[p.id];
+  state.pipelines = state.pipelines.filter(x => x.id !== p.id);
+  save(); closeModal('stagesModal');
+});
+
+/* ---------------- Stage detail modal ---------------- */
+const eventList = document.getElementById('eventList');
+const stageBadge = document.getElementById('stageBadge');
+
+function openDetailModal(pid, sid) {
+  currentPipelineId = pid; currentStageId = sid;
+  const p = getPipeline(pid), s = getStage(p, sid);
+  if (!s) return;
+  stageBadge.textContent = `${p.name} \u2014 ${s.name}`;
+  document.querySelectorAll('[data-view]').forEach(el => {
+    const key = el.dataset.view;
+    let val = p.info[key] || '';
+    if (key === 'projectDate' && val) {
+      const [y, m, d] = val.split('-');
+      if (y && m && d) val = `${m}/${d}/${y}`;
+    }
+    el.textContent = val || '\u2014';
+    el.classList.toggle('empty', !val);
+  });
+  renderEvents(s);
+  closeModal('stagesModal');
+  openModal('detailModal');
+}
+document.querySelectorAll('[data-info]').forEach(el =>
+  el.addEventListener('input', () => {
+    const p = getPipeline(currentPipelineId);
+    if (!p) return;
+    p.info[el.dataset.info] = el.value;
+    save();
+    if (el.classList.contains('f-area')) autoGrow(el);
+  }));
+document.getElementById('backToStages').addEventListener('click', () => openStagesModal(currentPipelineId));
+
+function autoGrow(ta) {
+  ta.style.height = 'auto';
+  ta.style.height = ta.scrollHeight + 'px';
+}
+
+function renderEvents(s) {
+  eventList.innerHTML = '';
+  s.events.forEach((ev, i) => {
+    const block = document.createElement('div');
+    block.className = 'event-block';
+
+    const removeBtn = document.createElement('button');
+    removeBtn.className = 'remove-ev';
+    removeBtn.innerHTML = '&minus;';
+    removeBtn.title = 'Remove this event';
+    removeBtn.addEventListener('click', () => {
+      if (confirm(`Remove Event ${i + 1}${ev.title ? ' — ' + ev.title : ''}?`)) {
+        s.events.splice(i, 1); save(); renderEvents(s);
+      }
+    });
+
+    const card = document.createElement('div');
+    card.className = 'event-card';
+
+    const top = document.createElement('div');
+    top.className = 'event-top';
+    top.innerHTML = `
+      <div class="cell"><label class="f-label">Event No.</label><div class="ev-no-val">${i + 1}</div></div>
+      <div class="cell"><label class="f-label">Event Title</label><input class="f-input" placeholder="—" value="${escapeAttr(ev.title)}"></div>
+      <div class="cell"><label class="f-label">Event Date</label><input class="f-input" type="date" value="${escapeAttr(ev.date)}"></div>`;
+
+    const desc = document.createElement('div');
+    desc.className = 'event-desc';
+    desc.innerHTML = `<label class="f-label">Event Description</label><textarea class="f-area" rows="1" placeholder="—">${escapeHtml(ev.desc)}</textarea>`;
+
+    top.querySelector('input[placeholder]').addEventListener('input', e => { ev.title = e.target.value; save(); });
+    top.querySelector('input[type="date"]').addEventListener('input', e => { ev.date = e.target.value; save(); });
+    const ta = desc.querySelector('textarea');
+    ta.addEventListener('input', e => { ev.desc = e.target.value; save(); autoGrow(e.target); });
+
+    card.appendChild(top); card.appendChild(desc);
+    block.appendChild(removeBtn); block.appendChild(card);
+    eventList.appendChild(block);
+    autoGrow(ta);
+  });
+}
+document.getElementById('addEventBtn').addEventListener('click', () => {
+  const p = getPipeline(currentPipelineId), s = getStage(p, currentStageId);
+  if (!s) return;
+  s.events.push({ title: '', date: '', desc: '' });
+  save(); renderEvents(s);
+  const cards = eventList.querySelectorAll('.event-card');
+  if (cards.length) cards[cards.length - 1].querySelector('input.f-input').focus();
+});
+
+/* ---------------- Export / Import ---------------- */
+document.getElementById('exportBtn').addEventListener('click', () => {
+  const fc = {
+    type: 'FeatureCollection',
+    features: state.pipelines.map(p => ({
+      type: 'Feature',
+      geometry: { type: 'LineString', coordinates: p.coords.map(c => [c[1], c[0]]) },
+      properties: { id: p.id, name: p.name, info: p.info, stages: p.stages }
+    }))
+  };
+  const blob = new Blob([JSON.stringify(fc, null, 2)], { type: 'application/geo+json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'pipelines.geojson';
+  a.click();
+  URL.revokeObjectURL(a.href);
+});
+document.getElementById('importBtn').addEventListener('click', () => document.getElementById('importFile').click());
+document.getElementById('importFile').addEventListener('change', e => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      const fc = JSON.parse(reader.result);
+      (fc.features || []).forEach(f => {
+        if (!f.geometry || f.geometry.type !== 'LineString') return;
+        const p = {
+          id: (f.properties && f.properties.id) || uid(),
+          name: (f.properties && f.properties.name) || 'Imported Pipeline',
+          coords: f.geometry.coordinates.map(c => [c[1], c[0]]),
+          info: (f.properties && f.properties.info) || { assetName: '', projectNo: '', projectDate: '', manufacturer: '', description: '' },
+          stages: (f.properties && f.properties.stages) || DEFAULT_STAGES.map(n => ({ id: uid(), name: n, events: [] }))
+        };
+        state.pipelines = state.pipelines.filter(x => x.id !== p.id);
+        state.pipelines.push(p);
+        renderPipeline(p);
+      });
+      save();
+      const group = L.featureGroup(Object.values(pipelineLayers));
+      if (group.getLayers().length) map.fitBounds(group.getBounds().pad(0.2));
+    } catch (err) { alert('Could not read that file as GeoJSON.'); }
+    e.target.value = '';
+  };
+  reader.readAsText(file);
+});
+
+/* ---------------- Utils ---------------- */
+function escapeHtml(s) {
+  return String(s || '').replace(/[&<>"']/g, c =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+function escapeAttr(s) { return escapeHtml(s); }
+</script>
+</body>
+</html>
